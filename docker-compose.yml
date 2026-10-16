@@ -1,0 +1,49 @@
+services:
+  enrichment:
+    build: .
+    image: dom-mos-enrichment:latest
+    container_name: dom-mos-enrichment
+    restart: unless-stopped
+    ports:
+      - "${ENRICH_PORT:-8000}:${ENRICH_PORT:-8000}"
+    environment:
+      ENRICH_PORT: ${ENRICH_PORT:-8000}
+      ENRICH_LOG_LEVEL: ${ENRICH_LOG_LEVEL:-INFO}
+      ENRICH_REQUEST_TIMEOUT: ${ENRICH_REQUEST_TIMEOUT:-15}
+      ENRICH_REQUEST_RETRIES: ${ENRICH_REQUEST_RETRIES:-2}
+      ENRICH_BATCH_CONCURRENCY: ${ENRICH_BATCH_CONCURRENCY:-1}
+      ENRICH_BATCH_DELAY: ${ENRICH_BATCH_DELAY:-0.5}
+      ENRICH_CACHE_ENABLED: ${ENRICH_CACHE_ENABLED:-true}
+      ENRICH_CACHE_TTL: ${ENRICH_CACHE_TTL:-2592000}
+      ENRICH_REDIS_URL: ${ENRICH_REDIS_URL:-redis://redis:6379/0}
+      UVICORN_PORT: ${ENRICH_PORT:-8000}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('UVICORN_PORT','8000')+'/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: dom-mos-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis-data:
