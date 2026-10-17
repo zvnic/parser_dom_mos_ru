@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.services import dom_mos
 from app.services.canonical import to_canonical
 from app.services.openaddress import enrich as openaddress_enrich
+from app.services.gis_zhkh import enrich as gis_zhkh_enrich
 
 
 class BuildingNotFound(Exception):
@@ -30,7 +31,7 @@ def enrich(address: str) -> dict:
     house_number = dom_mos.extract_house_number(address)
     query = dom_mos.normalize(address)
 
-    sources = {"dom_mos": "error", "openaddress": "error"}
+    sources = {"dom_mos": "error", "openaddress": "error", "gis_zhkh": "error"}
     warnings: list[str] = []
     mkd: dict | None = None
     mkd_id: str | None = None
@@ -71,19 +72,33 @@ def enrich(address: str) -> dict:
         sources["openaddress"] = "error"
         warnings.append(f"openaddress.ru недоступен: {exc}")
 
+    # 3. ГИС ЖКХ — характеристики дома и реквизиты текущей УК
+    gis_zhkh: dict = {}
+    try:
+        gis_zhkh = gis_zhkh_enrich(address, (enrichment or {}).get("fiasId"))
+        if gis_zhkh:
+            sources["gis_zhkh"] = "ok"
+        else:
+            sources["gis_zhkh"] = "no_data"
+            warnings.append("ГИС ЖКХ: по адресу ничего не найдено")
+    except Exception as exc:  # noqa: BLE001
+        sources["gis_zhkh"] = "error"
+        warnings.append(f"ГИС ЖКХ недоступен: {exc}")
+
     # Ни один источник не дал данных
-    if mkd is None and not enrichment:
+    if mkd is None and not enrichment and not gis_zhkh:
         raise BuildingNotFound(
             "; ".join(warnings) or f"По адресу {address!r} ничего не найдено"
         )
 
     result: dict = {
-        "canonical": to_canonical(mkd, enrichment),
+        "canonical": to_canonical(mkd, {**enrichment, **gis_zhkh}),
         "sources": sources,
         "warnings": warnings,
         "openaddress": enrichment,
+        "gis_zhkh": gis_zhkh,
         "mkdId": mkd_id,
-        "address": (mkd or {}).get("fullAddress") or enrichment.get("address"),
+        "address": (mkd or {}).get("fullAddress") or enrichment.get("address") or gis_zhkh.get("address"),
         "info": None,
         "full": mkd,
         "alternatives": alternatives,

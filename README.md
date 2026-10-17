@@ -11,6 +11,7 @@
 |---|---|
 | [dom.mos.ru](https://dom.mos.ru/) | адрес, округ/район, тип дома, год постройки, серия проекта, этажность, общая/жилая площадь, УК, ЖСК, председатель совета |
 | [openaddress.ru](https://openaddress.ru/) | почтовый индекс, УК, число квартир/подъездов/лифтов, состояние дома, ссылка на страницу |
+| [ГИС ЖКХ](https://dom.gosuslugi.ru/) | ФИАС/GUID, состояние, год, площади, износ, серия, материал стен, кадастр, реквизиты и контакты УК |
 
 dom.mos.ru защищён DDoS-Guard (TLS-fingerprinting), поэтому запросы
 выполняются через `curl_cffi` с имперсонацией браузера Chrome — обычные
@@ -38,6 +39,7 @@ app/
   services/
     dom_mos.py         # клиент dom.mos.ru
     openaddress.py     # клиент openaddress.ru
+    gis_zhkh.py        # клиент ГИС ЖКХ (dom.gosuslugi.ru)
     canonical.py       # каноническая модель
     enrichment.py      # оркестрация + batch
 Dockerfile
@@ -144,6 +146,7 @@ Content-Type: application/json
 | `ENRICH_CACHE_ENABLED` | `true` | включить кэш |
 | `ENRICH_CACHE_TTL` | `2592000` | время жизни записи кэша, сек (30 дней) |
 | `ENRICH_REDIS_URL` | `redis://redis:6379/0` | адрес Redis |
+| `ENRICH_GIS_ZHKH_INDEX_PATH` | пусто | путь к `index.json` адресов/ФИАС из реестра лицензий ГИС ЖКХ |
 
 > **Важно:** `ENRICH_BATCH_CONCURRENCY` по умолчанию `1` — dom.mos.ru за
 > DDoS-Guard блокирует IP при большом числе одновременных запросов.

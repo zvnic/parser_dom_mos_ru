@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     cache_enabled: bool = True
     cache_ttl: int = 2592000  # 30 дней (данные о домах почти не меняются)
     redis_url: str = "redis://redis:6379/0"
+    gis_zhkh_index_path: str | None = None
 
 
 settings = Settings()

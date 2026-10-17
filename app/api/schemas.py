@@ -12,6 +12,7 @@ class EnrichmentResult(BaseModel):
     address: str | None = None
     info: dict | None = None
     openaddress: dict = {}
+    gis_zhkh: dict = {}
     full: dict | None = None
     alternatives: list[dict] = []
     warnings: list[str] = []

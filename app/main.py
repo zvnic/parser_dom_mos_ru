@@ -12,7 +12,7 @@ app = FastAPI(
     title="Dom Moscow Enrichment Service",
     description=(
         "Микросервис обогащения данных о домах по адресу: объединяет "
-        "dom.mos.ru (основной источник) и openaddress.ru (ФИАС) в единую "
+        "dom.mos.ru, openaddress.ru и ГИС ЖКХ в единую "
         "каноническую модель. Интегрируется с CRM по REST API."
     ),
     version="1.0.0",
