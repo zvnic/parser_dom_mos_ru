@@ -4,7 +4,7 @@
 (обогащение) в одну нормализованную структуру.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class CanonicalBuilding(BaseModel):
@@ -40,6 +40,12 @@ class CanonicalBuilding(BaseModel):
     management_company_ogrn: str | None = None
     management_company_phone: str | None = None
     management_company_email: str | None = None
+    city_fias_id: str | None = None
+    region_fias_id: str | None = None
+    city: str | None = None
+    street: str | None = None
+    house_number: str | None = None
+    provider_availability: list[dict] = Field(default_factory=list)
 
 
 def _int(value) -> int | None:
@@ -71,7 +77,7 @@ def _name(value) -> str | None:
     return str(value)
 
 
-def to_canonical(mkd: dict | None = None, enrichment: dict | None = None) -> CanonicalBuilding:
+def to_canonical(mkd: dict | None = None, enrichment: dict | None = None, provider_availability: list[dict] | None = None) -> CanonicalBuilding:
     mkd = mkd or {}
     enrichment = enrichment or {}
 
@@ -106,4 +112,10 @@ def to_canonical(mkd: dict | None = None, enrichment: dict | None = None) -> Can
         management_company_ogrn=_str(enrichment.get("managementCompanyOgrn")),
         management_company_phone=_str(enrichment.get("managementCompanyPhone")),
         management_company_email=_str(enrichment.get("managementCompanyEmail")),
+        city_fias_id=_str(enrichment.get("cityFiasId")),
+        region_fias_id=_str(enrichment.get("regionFiasId")),
+        city=_name(enrichment.get("city")),
+        street=_name(enrichment.get("streetWithType") or enrichment.get("street")),
+        house_number=_str(enrichment.get("house")),
+        provider_availability=provider_availability or [],
     )

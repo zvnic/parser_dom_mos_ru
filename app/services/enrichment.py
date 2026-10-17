@@ -10,6 +10,7 @@ from app.services import dom_mos
 from app.services.canonical import to_canonical
 from app.services.openaddress import enrich as openaddress_enrich
 from app.services.gis_zhkh import enrich as gis_zhkh_enrich
+from app.services.beeline import check_connection as beeline_check_connection
 
 
 class BuildingNotFound(Exception):
@@ -31,7 +32,7 @@ def enrich(address: str) -> dict:
     house_number = dom_mos.extract_house_number(address)
     query = dom_mos.normalize(address)
 
-    sources = {"dom_mos": "error", "openaddress": "error", "gis_zhkh": "error"}
+    sources = {"dom_mos": "error", "openaddress": "error", "gis_zhkh": "error", "beeline": "error"}
     warnings: list[str] = []
     mkd: dict | None = None
     mkd_id: str | None = None
@@ -92,6 +93,20 @@ def enrich(address: str) -> dict:
         sources["gis_zhkh"] = "error"
         warnings.append(f"ГИС ЖКХ недоступен: {exc}")
 
+    merged = {**enrichment, **gis_zhkh}
+    beeline: dict = {}
+    try:
+        beeline_payload = _beeline_payload(address, house_number, mkd, merged)
+        beeline = beeline_check_connection(beeline_payload)
+        sources["beeline"] = "ok" if beeline.get("checked") else "skipped"
+        if beeline.get("status") == "skipped":
+            warnings.append(f"Beeline: {beeline.get('reason')}")
+    except Exception as exc:  # noqa: BLE001
+        sources["beeline"] = "error"
+        warnings.append(f"Beeline недоступен: {exc}")
+
+    providers = [beeline] if beeline else []
+
     # Ни один источник не дал данных
     if mkd is None and not enrichment and not gis_zhkh:
         raise BuildingNotFound(
@@ -99,11 +114,12 @@ def enrich(address: str) -> dict:
         )
 
     result: dict = {
-        "canonical": to_canonical(mkd, {**enrichment, **gis_zhkh}),
+        "canonical": to_canonical(mkd, merged, providers),
         "sources": sources,
         "warnings": warnings,
         "openaddress": enrichment,
         "gis_zhkh": gis_zhkh,
+        "beeline": beeline,
         "mkdId": mkd_id,
         "address": (mkd or {}).get("fullAddress") or enrichment.get("address") or gis_zhkh.get("address"),
         "info": None,
@@ -127,6 +143,50 @@ def enrich(address: str) -> dict:
         cache_set(address, result)
 
     return result
+
+
+def _beeline_payload(address: str, house_number: str | None, mkd: dict | None, data: dict) -> dict:
+    """Собирает минимальный payload из данных первых источников."""
+    city_fias = _find_value((mkd, data), "cityFiasId") or settings.beeline_city_fias_id
+    region_fias = _find_value((mkd, data), "regionFiasId") or settings.beeline_region_fias_id
+    house_fias = data.get("fiasId")
+    street = data.get("streetWithType") or _find_value((mkd, data), "streetWithType")
+    city = data.get("city") or _find_value((mkd, data), "city") or settings.beeline_city
+    return {
+        "city": city,
+        "cityFiasId": city_fias,
+        "cityWithType": data.get("cityWithType") or settings.beeline_city_with_type,
+        "houseFiasId": house_fias,
+        "houseType": "д",
+        "house": data.get("house") or house_number,
+        "flat": data.get("flat") or _extract_flat(address),
+        "flatType": "кв",
+        "regionFiasId": region_fias,
+        "streetWithType": street or _street_from_address(address),
+    }
+
+
+def _extract_flat(address: str) -> str | None:
+    """Извлекает номер квартиры/помещения из адреса."""
+    m = re.search(r"\b(?:кв|квартира|кварт|офис|помещение)\s*\.?\s*(\d+)", address, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+def _find_value(objects: tuple[dict | None, ...], key: str):
+    for obj in objects:
+        if isinstance(obj, dict) and obj.get(key):
+            return obj[key]
+        if isinstance(obj, dict):
+            for value in obj.values():
+                if isinstance(value, dict) and value.get(key):
+                    return value[key]
+    return None
+
+
+def _street_from_address(address: str) -> str | None:
+    value = re.sub(r"\b(?:г|город|москва|дом|д)\.?\s*", "", address, flags=re.IGNORECASE)
+    value = re.sub(r"[,].*$", "", value).strip()
+    return value or None
 
 
 def enrich_batch(
