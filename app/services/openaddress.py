@@ -74,31 +74,63 @@ def _first_index(html: str) -> str | None:
     return None
 
 
-def get_street_houses(street_url: str) -> list[dict]:
-    """Парсит таблицу многоквартирных домов на странице улицы."""
-    html = _get(f"{BASE}{street_url}")
-    soup = BeautifulSoup(html, "html.parser")
-    table = soup.select_one("#street-houses-table")
-    if table is None:
-        return []
+def _houses_from_houses_list(html: str) -> list[dict]:
+    """Разбирает JS-массив `houses_list` со всеми домами улицы.
+
+    Страница улицы отдаёт в таблице только первую страницу домов, а полный
+    список (включая дома за пределами первой страницы, например «50 корп. 2»)
+    лежит в `houses_list`. Без него дом не получал ФИАС и Beeline пропускался.
+    """
     houses = []
-    for tr in table.select("tbody tr"):
-        cells = tr.find_all("td")
-        if len(cells) < 5:
-            continue
-        a = cells[0].find("a", href=True)
-        if a is None:
+    for entry in re.findall(r"houses_list\[\d+\]\s*=\s*\{(.*?)\};", html, re.S):
+        fields = dict(re.findall(r"(\w+):\s*'([^']*)'", entry))
+        href = fields.get("href", "")
+        if not href:
             continue
         houses.append(
             {
-                "address": a.get_text(strip=True),
-                "fias_id": a["href"].rstrip("/").rsplit("/", 1)[-1],
-                "year": cells[1].get_text(strip=True),
-                "floors": cells[2].get_text(strip=True),
-                "apartments": cells[3].get_text(strip=True),
-                "state": cells[4].get_text(strip=True),
+                "address": fields.get("street_address", ""),
+                "fias_id": href.rstrip("/").rsplit("/", 1)[-1],
+                "year": fields.get("building_year", ""),
+                "floors": fields.get("max_floor_count", ""),
+                "apartments": fields.get("residential_premise_count", ""),
+                "state": fields.get("condition", ""),
             }
         )
+    return houses
+
+
+def get_street_houses(street_url: str) -> list[dict]:
+    """Парсит дома на странице улицы: таблицу и полный JS-список."""
+    html = _get(f"{BASE}{street_url}")
+    soup = BeautifulSoup(html, "html.parser")
+    houses = []
+    seen: set[str] = set()
+    table = soup.select_one("#street-houses-table")
+    if table is not None:
+        for tr in table.select("tbody tr"):
+            cells = tr.find_all("td")
+            if len(cells) < 5:
+                continue
+            a = cells[0].find("a", href=True)
+            if a is None:
+                continue
+            fias_id = a["href"].rstrip("/").rsplit("/", 1)[-1]
+            houses.append(
+                {
+                    "address": a.get_text(strip=True),
+                    "fias_id": fias_id,
+                    "year": cells[1].get_text(strip=True),
+                    "floors": cells[2].get_text(strip=True),
+                    "apartments": cells[3].get_text(strip=True),
+                    "state": cells[4].get_text(strip=True),
+                }
+            )
+            seen.add(fias_id)
+    for house in _houses_from_houses_list(html):
+        if house["fias_id"] not in seen:
+            seen.add(house["fias_id"])
+            houses.append(house)
     return houses
 
 

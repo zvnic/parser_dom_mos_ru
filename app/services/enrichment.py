@@ -159,7 +159,10 @@ def _beeline_payload(address: str, house_number: str | None, mkd: dict | None, d
         "houseFiasId": house_fias,
         "houseType": "д",
         "house": data.get("house") or house_number,
-        "flat": data.get("flat") or _extract_flat(address),
+        # Эндпоинт Beeline отвечает IsNotAvailable без номера квартиры, даже
+        # когда дом подключён. Для проверки на уровне дома передаём первую
+        # квартиру, если в адресе её нет.
+        "flat": data.get("flat") or _extract_flat(address) or "1",
         "flatType": "кв",
         "regionFiasId": region_fias,
         "streetWithType": street or _street_from_address(address),

@@ -184,6 +184,14 @@ def normalize(address: str) -> str:
 
 def extract_house_number(address: str) -> str | None:
     """Извлекает номер дома из адреса."""
+    # "50 корпус 2" (без "д.") — номер дома стоит перед словом "корпус".
+    m = re.search(
+        r"\b(\d+[а-яёА-ЯЁ]?(?:\s*/\s*\d+)?)\s+корпус\b",
+        address,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
     m = re.search(
         r"\b(?:дом|д|строение|стр|корпус|к)\s*\.?\s*(\d+[а-яёА-ЯЁ]*(?:\s*/\s*\d+)?)",
         address,
