@@ -120,8 +120,10 @@ def enrich(address: str) -> dict:
             "Общая площадь жилых помещений": mkd.get("residentialSquare"),
         }
 
-    # Кэшируем только полные/недеградированные результаты (без ошибок источников)
-    if all(status != "error" for status in sources.values()):
+    # Кэшируем только полностью успешные результаты: если хоть один источник
+    # вернул error или no_data, не кэшируем — иначе устаревший/неполный ответ
+    # застрянет в Redis и замаскирует реальные проблемы источников.
+    if all(status == "ok" for status in sources.values()):
         cache_set(address, result)
 
     return result
