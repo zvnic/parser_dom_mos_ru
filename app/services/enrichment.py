@@ -11,6 +11,7 @@ from app.services.canonical import to_canonical
 from app.services.openaddress import enrich as openaddress_enrich
 from app.services.gis_zhkh import enrich as gis_zhkh_enrich
 from app.services.beeline import check_connection as beeline_check_connection
+from app.services.beeline import resolve_address
 
 
 class BuildingNotFound(Exception):
@@ -29,8 +30,10 @@ def enrich(address: str) -> dict:
         return cached
 
     session = dom_mos._get_session()
-    house_number = dom_mos.extract_house_number(address)
-    query = dom_mos.normalize(address)
+    clean_address = dom_mos.strip_apartment(address)
+    house_number = dom_mos.extract_house_number(clean_address)
+    corpus = dom_mos.extract_corpus(clean_address)
+    query = dom_mos.normalize(clean_address)
 
     sources = {"dom_mos": "error", "openaddress": "error", "gis_zhkh": "error", "beeline": "error"}
     warnings: list[str] = []
@@ -42,14 +45,16 @@ def enrich(address: str) -> dict:
     try:
         found = dom_mos.search_buildings(query, session)
         if not found:
-            fallback = dom_mos.normalize(re.sub(r"\b\d+[а-яёА-ЯЁ]*\b", " ", address))
+            fallback = dom_mos.normalize(
+                re.sub(r"\b\d+[а-яёА-ЯЁ]*\b", " ", clean_address)
+            )
             if fallback:
                 found = dom_mos.search_buildings(fallback, session)
         if not found:
             sources["dom_mos"] = "no_data"
             warnings.append("dom.mos.ru: по адресу ничего не найдено")
         else:
-            top = dom_mos.pick_best(found, house_number)
+            top = dom_mos.pick_best(found, house_number, corpus)
             mkd_id = top["mkdId"]
             mkd = dom_mos.fetch_building(top["mkdId"], top["mkdResponseType"], session)
             alternatives = [
@@ -147,26 +152,51 @@ def enrich(address: str) -> dict:
 
 def _beeline_payload(address: str, house_number: str | None, mkd: dict | None, data: dict) -> dict:
     """Собирает минимальный payload из данных первых источников."""
-    city_fias = _find_value((mkd, data), "cityFiasId") or settings.beeline_city_fias_id
-    region_fias = _find_value((mkd, data), "regionFiasId") or settings.beeline_region_fias_id
-    house_fias = data.get("fiasId")
-    street = data.get("streetWithType") or _find_value((mkd, data), "streetWithType")
-    city = data.get("city") or _find_value((mkd, data), "city") or settings.beeline_city
-    return {
+    # get-address Beeline точнее fuzzy-поиска: отдаёт правильный ФИАС дома и
+    # существующие номера квартир (нумерация не всегда начинается с 1).
+    resolved = resolve_address(address) or {}
+    city_fias = (
+        resolved.get("city_fias_id")
+        or _find_value((mkd, data), "cityFiasId")
+        or settings.beeline_city_fias_id
+    )
+    region_fias = (
+        resolved.get("region_fias_id")
+        or _find_value((mkd, data), "regionFiasId")
+        or settings.beeline_region_fias_id
+    )
+    house_fias = resolved.get("house_fias_id") or data.get("fiasId")
+    street = (
+        resolved.get("street_with_type")
+        or data.get("streetWithType")
+        or _find_value((mkd, data), "streetWithType")
+    )
+    city = (
+        resolved.get("city")
+        or data.get("city")
+        or _find_value((mkd, data), "city")
+        or settings.beeline_city
+    )
+    payload = {
         "city": city,
         "cityFiasId": city_fias,
-        "cityWithType": data.get("cityWithType") or settings.beeline_city_with_type,
+        "cityWithType": (
+            resolved.get("city_with_type")
+            or data.get("cityWithType")
+            or settings.beeline_city_with_type
+        ),
         "houseFiasId": house_fias,
         "houseType": "д",
-        "house": data.get("house") or house_number,
-        # Эндпоинт Beeline отвечает IsNotAvailable без номера квартиры, даже
-        # когда дом подключён. Для проверки на уровне дома передаём первую
-        # квартиру, если в адресе её нет.
-        "flat": data.get("flat") or _extract_flat(address) or "1",
+        "house": resolved.get("house") or data.get("house") or house_number,
+        "flat": resolved.get("flat") or data.get("flat") or _extract_flat(address) or "1",
         "flatType": "кв",
         "regionFiasId": region_fias,
         "streetWithType": street or _street_from_address(address),
     }
+    if resolved.get("block"):
+        payload["block"] = resolved["block"]
+        payload["blockType"] = resolved.get("block_type") or "к"
+    return payload
 
 
 def _extract_flat(address: str) -> str | None:

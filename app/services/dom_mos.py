@@ -182,6 +182,23 @@ def normalize(address: str) -> str:
     return s
 
 
+def strip_apartment(address: str) -> str:
+    """Убирает квартиру/офис из конца адреса — они мешают автодополнению."""
+    return re.sub(
+        r"(?i),?\s*(?:кв|квартира|кварт|офис|помещение)\.?\s*\d+\s*$",
+        "",
+        address,
+    ).strip()
+
+
+def extract_corpus(address: str) -> str | None:
+    """Номер корпуса/строения из адреса («д. 1 к 4» → «4»)."""
+    m = re.search(
+        r"\b(?:корпус|корп|к)\s*\.?\s*(\d+[а-яёА-ЯЁ]?)", address, re.IGNORECASE
+    )
+    return m.group(1) if m else None
+
+
 def extract_house_number(address: str) -> str | None:
     """Извлекает номер дома из адреса."""
     # "50 корпус 2" (без "д.") — номер дома стоит перед словом "корпус".
@@ -203,13 +220,31 @@ def extract_house_number(address: str) -> str | None:
     return nums[-1] if nums else None
 
 
-def pick_best(candidates: list[dict], house_number: str | None) -> dict:
-    """Выбирает кандидата, чей адрес содержит номер дома."""
+def pick_best(
+    candidates: list[dict], house_number: str | None, corpus: str | None = None
+) -> dict:
+    """Выбирает кандидата по номеру дома и корпусу, а не по подстроке."""
     if len(candidates) == 1:
         return candidates[0]
-    if house_number:
-        pattern = rf"\b{re.escape(house_number)}\b"
-        for c in candidates:
-            if re.search(pattern, c["address"]):
-                return c
+    house_pattern = (
+        re.compile(rf"\b{re.escape(house_number)}\b") if house_number else None
+    )
+    corpus_pattern = (
+        re.compile(
+            rf"\b(?:корпус|корп|к)\s*\.?\s*{re.escape(corpus)}\b", re.IGNORECASE
+        )
+        if corpus
+        else None
+    )
+    for candidate in candidates:
+        address = candidate["address"]
+        if house_pattern and not house_pattern.search(address):
+            continue
+        if corpus_pattern and not corpus_pattern.search(address):
+            continue
+        return candidate
+    if house_pattern:
+        for candidate in candidates:
+            if house_pattern.search(candidate["address"]):
+                return candidate
     return candidates[0]

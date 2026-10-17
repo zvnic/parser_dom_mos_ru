@@ -7,6 +7,7 @@ from curl_cffi import requests
 from app.core.config import settings
 
 URL = "https://moskva.beeline.ru/api/home/check-connection/house-info/"
+ADDRESS_URL = "https://moskva.beeline.ru/api/home/check-connection/v1/get-address/"
 HEADERS = {
     "accept": "*/*",
     "content-type": "application/json",
@@ -36,6 +37,51 @@ def _available(payload: dict) -> bool | None:
     if isinstance(high_speed, bool):
         return high_speed
     return None
+
+
+def resolve_address(query: str) -> dict | None:
+    """Разрешает адрес через Beeline get-address: ФИАС дома, корпус и квартиру.
+
+    Эндпоинт подсказок возвращает корректный `house_fias_id` и существующие
+    номера квартир. Это важно, потому что нумерация квартир не всегда
+    начинается с 1 (например, «1 корп. 4» — с 309).
+    """
+    try:
+        response = requests.get(
+            ADDRESS_URL,
+            params={"query": query, "inCity": "true"},
+            headers=HEADERS,
+            timeout=settings.beeline_timeout,
+            impersonate="chrome",
+        )
+        response.raise_for_status()
+        items = response.json()
+    except Exception:  # noqa: BLE001 — резолвер не обязателен для проверки
+        return None
+    if not isinstance(items, list):
+        return None
+    house = next(
+        (it for it in items if isinstance(it, dict) and it.get("house_fias_id")),
+        None,
+    )
+    if house is None:
+        return None
+    flat = house.get("flat") or next(
+        (it.get("flat") for it in items if isinstance(it, dict) and it.get("flat")),
+        None,
+    )
+    return {
+        "house_fias_id": house.get("house_fias_id"),
+        "house": house.get("house"),
+        "block": house.get("block"),
+        "block_type": house.get("block_type"),
+        "street_with_type": house.get("street_with_type"),
+        "city": house.get("city"),
+        "city_with_type": house.get("city_with_type"),
+        "city_fias_id": house.get("city_fias_id"),
+        "region_fias_id": house.get("region_fias_id"),
+        "flat": flat,
+    }
 
 
 def check_connection(payload: dict) -> dict:

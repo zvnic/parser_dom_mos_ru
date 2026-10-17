@@ -134,14 +134,31 @@ def get_street_houses(street_url: str) -> list[dict]:
     return houses
 
 
-def _match_house(houses: list[dict], house_number: str | None) -> dict | None:
+def _extract_corpus(address: str) -> str | None:
+    """Номер корпуса/строения из адреса («д. 1 к 4» → «4»)."""
+    m = re.search(
+        r"\b(?:корпус|корп|к)\s*\.?\s*(\d+[а-яёА-ЯЁ]?)", address, re.IGNORECASE
+    )
+    return m.group(1) if m else None
+
+
+def _match_house(
+    houses: list[dict], house_number: str | None, corpus: str | None = None
+) -> dict | None:
     if not houses or not house_number:
         return houses[0] if houses else None
     pattern = re.compile(rf"\b{re.escape(house_number)}\b")
-    for h in houses:
-        if pattern.search(h["address"]):
-            return h
-    return None
+    candidates = [h for h in houses if pattern.search(h["address"])]
+    if not candidates:
+        return None
+    if corpus:
+        corpus_pattern = re.compile(
+            rf"\b(?:корпус|корп|к)\s*\.?\s*{re.escape(corpus)}\b", re.IGNORECASE
+        )
+        for house in candidates:
+            if corpus_pattern.search(house["address"]):
+                return house
+    return candidates[0]
 
 
 def get_house(fias_id: str) -> dict:
@@ -184,7 +201,7 @@ def enrich(street_query: str, house_number: str | None) -> dict:
         return {}
 
     houses = get_street_houses(street["url"])
-    house = _match_house(houses, house_number)
+    house = _match_house(houses, house_number, _extract_corpus(street_query))
     if house is None:
         return {}
 
