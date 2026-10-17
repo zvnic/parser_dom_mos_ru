@@ -36,16 +36,33 @@ def _get(url: str, params: dict | None = None) -> str:
     return resp.text
 
 
+def _tokenize(text: str) -> set[str]:
+    """Токенизирует адрес для сопоставления: «2-я» → «2я», «ё» → «е»."""
+    s = text.lower().replace("ё", "е")
+    s = re.sub(r"(\d+)-([а-я])", r"\1\2", s)
+    return set(re.findall(r"[0-9а-яa-z]+", s))
+
+
 def search_street(query: str) -> dict | None:
-    """Ищет улицу на openaddress.ru, возвращает {name, url, index}."""
+    """Ищет улицу на openaddress.ru, возвращает {name, url, index}.
+
+    Среди выдачи выбирается результат, лучше всего совпадающий с запросом
+    (иначе для «2-я Синичкина» сервис мог бы вернуть «1-я Синичкина»).
+    """
     html = _get(f"{BASE}/search", params={"search-fias-address": query, "search-type": "fias"})
     soup = BeautifulSoup(html, "html.parser")
-    link = soup.select_one("table.table a.link-blue[href]")
-    if link is None:
+    links = soup.select("table.table a.link-blue[href]")
+    if not links:
         return None
+
+    q_tokens = _tokenize(query)
+    best = max(
+        links,
+        key=lambda a: len(q_tokens & _tokenize(a.get_text(strip=True))),
+    )
     return {
-        "name": link.get_text(strip=True),
-        "url": link["href"],
+        "name": best.get_text(strip=True),
+        "url": best["href"],
         "index": _first_index(html),
     }
 

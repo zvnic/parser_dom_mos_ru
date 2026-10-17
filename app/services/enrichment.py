@@ -62,7 +62,9 @@ def enrich(address: str) -> dict:
     # 2. openaddress.ru (обогащение)
     enrichment: dict = {}
     try:
-        enrichment = openaddress_enrich(query, house_number)
+        # передаём исходный адрес: dom.mos.normalize() ломает порядковые
+        # «2-я»/«1-я» в названиях улиц, а для ФИАС-поиска нужен точный запрос
+        enrichment = openaddress_enrich(address, house_number)
         if enrichment:
             sources["openaddress"] = "ok"
         else:
@@ -78,6 +80,11 @@ def enrich(address: str) -> dict:
         gis_zhkh = gis_zhkh_enrich(address, (enrichment or {}).get("fiasId"))
         if gis_zhkh:
             sources["gis_zhkh"] = "ok"
+        elif not (enrichment or {}).get("fiasId") and not settings.gis_zhkh_index_path:
+            sources["gis_zhkh"] = "no_data"
+            warnings.append(
+                "ГИС ЖКХ: нет ФИАС дома (индекс не настроен, openaddress не вернул ФИАС)"
+            )
         else:
             sources["gis_zhkh"] = "no_data"
             warnings.append("ГИС ЖКХ: по адресу ничего не найдено")
