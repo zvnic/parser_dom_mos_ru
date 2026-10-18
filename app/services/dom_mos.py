@@ -222,29 +222,19 @@ def extract_house_number(address: str) -> str | None:
 
 def pick_best(
     candidates: list[dict], house_number: str | None, corpus: str | None = None
-) -> dict:
+) -> dict | None:
     """Выбирает кандидата по номеру дома и корпусу, а не по подстроке."""
-    if len(candidates) == 1:
-        return candidates[0]
-    house_pattern = (
-        re.compile(rf"\b{re.escape(house_number)}\b") if house_number else None
-    )
-    corpus_pattern = (
-        re.compile(
-            rf"\b(?:корпус|корп|к)\s*\.?\s*{re.escape(corpus)}\b", re.IGNORECASE
-        )
-        if corpus
-        else None
-    )
     for candidate in candidates:
-        address = candidate["address"]
-        if house_pattern and not house_pattern.search(address):
+        address = candidate.get("address") or ""
+        candidate_house = extract_house_number(address)
+        candidate_corpus = extract_corpus(address)
+        if house_number and _address_part(candidate_house) != _address_part(house_number):
             continue
-        if corpus_pattern and not corpus_pattern.search(address):
+        if corpus and _address_part(candidate_corpus) != _address_part(corpus):
             continue
         return candidate
-    if house_pattern:
-        for candidate in candidates:
-            if house_pattern.search(candidate["address"]):
-                return candidate
-    return candidates[0]
+    return None
+
+
+def _address_part(value: str | None) -> str:
+    return re.sub(r"[^0-9а-яё]", "", (value or "").lower())

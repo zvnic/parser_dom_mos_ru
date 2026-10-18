@@ -171,7 +171,10 @@ OSM и резервных источников.
 | `ENRICH_GIS_ZHKH_PASSPORT_ENABLED` | `true` | получать официальный электронный паспорт МКД |
 | `ENRICH_GIS_ZHKH_PASSPORT_POLL_ATTEMPTS` | `30` | максимум опросов готовности паспорта |
 | `ENRICH_OSM_ENABLED` | `true` | получать подъезды и параметры здания из OSM |
-| `ENRICH_OSM_USER_AGENT` | `dom-mos-enrichment/1.0` | идентификатор клиента Nominatim/Overpass |
+| `ENRICH_OSM_USER_AGENT` | `dom-mos-enrichment/1.1 (+URL)` | идентификатор и контактный URL клиента Nominatim/Overpass |
+| `ENRICH_OSM_NOMINATIM_TIMEOUT` | `20` | таймаут одного запроса Nominatim, сек |
+| `ENRICH_OSM_OVERPASS_TIMEOUT` | `60` | таймаут одного Overpass endpoint, сек |
+| `ENRICH_OSM_MAX_QUERY_VARIANTS` | `6` | максимум вариантов адреса на один дом |
 | `ENRICH_BEELINE_ENABLED` | `true` | включить проверку подключения дома к Beeline |
 | `ENRICH_BEELINE_TIMEOUT` | `10` | таймаут запроса к Beeline, сек |
 

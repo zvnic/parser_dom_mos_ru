@@ -60,12 +60,17 @@ def enrich(address: str) -> dict:
             warnings.append("dom.mos.ru: по адресу ничего не найдено")
         else:
             top = dom_mos.pick_best(found, house_number, corpus)
-            mkd_id = top["mkdId"]
-            mkd = dom_mos.fetch_building(top["mkdId"], top["mkdResponseType"], session)
-            alternatives = [
-                {"mkdId": b["mkdId"], "address": b["address"]} for b in found[1:]
-            ]
-            sources["dom_mos"] = "ok"
+            if top is None:
+                sources["dom_mos"] = "no_data"
+                warnings.append("dom.mos.ru: точного совпадения дома и корпуса нет")
+            else:
+                mkd_id = top["mkdId"]
+                mkd = dom_mos.fetch_building(top["mkdId"], top["mkdResponseType"], session)
+                alternatives = [
+                    {"mkdId": b["mkdId"], "address": b["address"]}
+                    for b in found if b is not top
+                ]
+                sources["dom_mos"] = "ok"
     except Exception as exc:  # noqa: BLE001
         sources["dom_mos"] = "error"
         warnings.append(f"dom.mos.ru недоступен: {exc}")
@@ -121,14 +126,23 @@ def enrich(address: str) -> dict:
     if settings.osm_enabled:
         try:
             osm = osm_entrances(
-                gis_zhkh.get("address") or (enrichment or {}).get("address")
-                or (mkd or {}).get("fullAddress") or address,
+                address,
                 flats_total=_as_int(electronic_passport.get("apartments")),
                 entrances_count=_as_int((enrichment or {}).get("entrances")),
                 flat=_as_int(_extract_flat(address)),
+                alternate_addresses=[
+                    candidate for candidate in (
+                        gis_zhkh.get("address"),
+                        (enrichment or {}).get("address"),
+                        (mkd or {}).get("fullAddress"),
+                    ) if candidate
+                ],
             )
             if osm.get("found"):
                 sources["osm"] = "ok"
+            elif osm.get("retry"):
+                sources["osm"] = "error"
+                warnings.append(osm["reason"])
             else:
                 sources["osm"] = "no_data"
                 warnings.append(f"OpenStreetMap: {osm.get('reason', 'данные о подъездах не найдены')}")
@@ -151,7 +165,7 @@ def enrich(address: str) -> dict:
     providers = [beeline] if beeline else []
 
     # Ни один источник не дал данных
-    if mkd is None and not enrichment and not gis_zhkh:
+    if mkd is None and not enrichment and not gis_zhkh and not osm.get("found"):
         raise BuildingNotFound(
             "; ".join(warnings) or f"По адресу {address!r} ничего не найдено"
         )
@@ -166,7 +180,10 @@ def enrich(address: str) -> dict:
         "osm": osm,
         "beeline": beeline,
         "mkdId": mkd_id,
-        "address": (mkd or {}).get("fullAddress") or enrichment.get("address") or gis_zhkh.get("address"),
+        "address": (
+            (mkd or {}).get("fullAddress") or enrichment.get("address")
+            or gis_zhkh.get("address") or osm.get("address")
+        ),
         "info": None,
         "full": mkd,
         "alternatives": alternatives,

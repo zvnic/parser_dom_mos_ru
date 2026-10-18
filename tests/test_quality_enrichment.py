@@ -7,11 +7,22 @@ import openpyxl
 
 from app.scripts.build_gis_index import build
 from app.services.canonical import to_canonical
+from app.services.dom_mos import pick_best
 from app.services.gis_zhkh import address_key
 from app.services.osm import _estimated_points, _overpass_get, _query_address, entrances
 
 
 class CanonicalQualityTests(unittest.TestCase):
+    def test_osm_only_result_has_stable_identity_and_address(self):
+        model = to_canonical(
+            osm={
+                "found": True, "osmType": "way", "osmId": 42,
+                "address": "Москва, улица Тестовая, дом 1",
+            }
+        )
+        self.assertEqual(model.id, "osm:way:42")
+        self.assertEqual(model.address, "Москва, улица Тестовая, дом 1")
+
     def test_official_passport_has_priority_and_preserves_zero(self):
         model = to_canonical(
             {"id": "1", "fullAddress": "Москва, дом 1", "square": 90, "floorsCount": 5},
@@ -46,6 +57,10 @@ class CanonicalQualityTests(unittest.TestCase):
             "волгоградский|128|к5",
         )
 
+    def test_dom_mos_rejects_wrong_single_candidate(self):
+        candidates = [{"address": "Керамический проезд, дом 77, корпус 2"}]
+        self.assertIsNone(pick_best(candidates, "2", "2"))
+
 
 class OsmEntranceTests(unittest.TestCase):
     def test_normalizes_abbreviation_without_space_after_dot(self):
@@ -73,7 +88,7 @@ class OsmEntranceTests(unittest.TestCase):
         )
         self.assertEqual(
             _query_address("Москва, Плеханова улица, дом 12"),
-            "Москва, Плеханова улица, 12",
+            "Москва, улица Плеханова, 12",
         )
 
     def test_estimates_points_along_longest_building_edge(self):

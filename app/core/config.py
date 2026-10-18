@@ -22,7 +22,12 @@ class Settings(BaseSettings):
     gis_zhkh_passport_enabled: bool = True
     gis_zhkh_passport_poll_attempts: int = 30
     osm_enabled: bool = True
-    osm_user_agent: str = "dom-mos-enrichment/1.0 (address enrichment service)"
+    osm_user_agent: str = (
+        "dom-mos-enrichment/1.1 (+https://github.com/zvnic/parser_dom_mos_ru)"
+    )
+    osm_nominatim_timeout: float = 20.0
+    osm_overpass_timeout: float = 60.0
+    osm_max_query_variants: int = 6
     beeline_enabled: bool = True
     beeline_timeout: float = 10.0
     # moskva.beeline.ru — только Москва, поэтому ФИАС города/региона фиксирован

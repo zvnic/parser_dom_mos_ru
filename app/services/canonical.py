@@ -163,8 +163,11 @@ def to_canonical(
     field_sources = {key: source for key, source in field_sources.items() if present[key] is not None}
 
     return CanonicalBuilding(
-        id=_str(mkd.get("id")) or _str(enrichment.get("fiasId")) or "",
-        address=mkd.get("fullAddress") or enrichment.get("address") or "",
+        id=(
+            _str(mkd.get("id")) or _str(enrichment.get("fiasId"))
+            or (f"osm:{osm.get('osmType')}:{osm.get('osmId')}" if osm.get("osmId") else "")
+        ),
+        address=mkd.get("fullAddress") or enrichment.get("address") or osm.get("address") or "",
         postal_index=_str(enrichment.get("postalIndex")),
         okrug=_name(mkd.get("okrug")),
         rayon=_name(mkd.get("rayon")),
