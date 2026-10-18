@@ -16,10 +16,16 @@ services:
       ENRICH_CACHE_ENABLED: ${ENRICH_CACHE_ENABLED:-true}
       ENRICH_CACHE_TTL: ${ENRICH_CACHE_TTL:-2592000}
       ENRICH_REDIS_URL: ${ENRICH_REDIS_URL:-redis://redis:6379/0}
-      ENRICH_GIS_ZHKH_INDEX_PATH: ${ENRICH_GIS_ZHKH_INDEX_PATH:-}
+      ENRICH_GIS_ZHKH_INDEX_PATH: ${ENRICH_GIS_ZHKH_INDEX_PATH:-/app/data/gis_zhkh_index.json}
+      ENRICH_GIS_ZHKH_PASSPORT_ENABLED: ${ENRICH_GIS_ZHKH_PASSPORT_ENABLED:-true}
+      ENRICH_GIS_ZHKH_PASSPORT_POLL_ATTEMPTS: ${ENRICH_GIS_ZHKH_PASSPORT_POLL_ATTEMPTS:-30}
+      ENRICH_OSM_ENABLED: ${ENRICH_OSM_ENABLED:-true}
+      ENRICH_OSM_USER_AGENT: ${ENRICH_OSM_USER_AGENT:-dom-mos-enrichment/1.0}
       ENRICH_BEELINE_ENABLED: ${ENRICH_BEELINE_ENABLED:-true}
       ENRICH_BEELINE_TIMEOUT: ${ENRICH_BEELINE_TIMEOUT:-10}
       UVICORN_PORT: ${ENRICH_PORT:-8000}
+    volumes:
+      - gis-data:/app/data
     depends_on:
       redis:
         condition: service_healthy
@@ -50,3 +56,4 @@ services:
 
 volumes:
   redis-data:
+  gis-data:

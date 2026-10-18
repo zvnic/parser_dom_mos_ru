@@ -11,7 +11,8 @@
 |---|---|
 | [dom.mos.ru](https://dom.mos.ru/) | адрес, округ/район, тип дома, год постройки, серия проекта, этажность, общая/жилая площадь, УК, ЖСК, председатель совета |
 | [openaddress.ru](https://openaddress.ru/) | почтовый индекс, УК, число квартир/подъездов/лифтов, состояние дома, ссылка на страницу |
-| [ГИС ЖКХ](https://dom.gosuslugi.ru/) | ФИАС/GUID, состояние, год, площади, износ, серия, материал стен, кадастр, реквизиты и контакты УК |
+| [ГИС ЖКХ](https://dom.gosuslugi.ru/) | ФИАС/GUID, официальный электронный паспорт (квартиры, лифты, помещения, площади, элементы износа), реквизиты УК и РСО |
+| [OpenStreetMap](https://www.openstreetmap.org/) | этажность, подъезды, диапазоны квартир и координаты дверей; расчетные значения явно помечаются `estimate` |
 | [Beeline](https://moskva.beeline.ru/customers/products/home/internet/) | проверка доступности домашнего интернета по ФИАС города и дома |
 
 dom.mos.ru защищён DDoS-Guard (TLS-fingerprinting), поэтому запросы
@@ -41,6 +42,7 @@ app/
     dom_mos.py         # клиент dom.mos.ru
     openaddress.py     # клиент openaddress.ru
     gis_zhkh.py        # клиент ГИС ЖКХ (dom.gosuslugi.ru)
+    osm.py             # подъезды и диапазоны квартир OpenStreetMap
     beeline.py         # проверка доступности сети Beeline
     canonical.py       # каноническая модель
     enrichment.py      # оркестрация + batch
@@ -116,6 +118,20 @@ Content-Type: application/json
     "apartments_count": 277,
     "entrances_count": 5,
     "lifts_count": 5,
+    "non_residential_premises_count": 3,
+    "parking_places_count": 0,
+    "entrances_coverage": "osm",
+    "entrances": [
+      {"number": 1, "flats_from": 1, "flats_to": 55, "lat": 55.7, "lon": 37.7, "source": "osm"}
+    ],
+    "resource_providers": [
+      {"name": "АО МОСВОДОКАНАЛ", "phone": "+7 …", "guid": "…"}
+    ],
+    "field_sources": {
+      "apartments_count": "gis_zhkh_passport",
+      "entrances_count": "osm",
+      "floors_count": "dom_mos"
+    },
     "condition": "Исправный",
     "source_url": "https://openaddress.ru/houses/…"
   },
@@ -129,6 +145,9 @@ Content-Type: application/json
 ```
 
 Каноническая модель — `canonical` — основной результат для интеграции.
+`canonical.field_sources` показывает, какой источник фактически выбран для
+ключевых числовых характеристик; это позволяет отличить официальный паспорт от
+OSM и резервных источников.
 Остальные поля (`info`, `openaddress`, `full`) оставлены для отладки и
 продвинутых сценариев.
 
@@ -148,7 +167,11 @@ Content-Type: application/json
 | `ENRICH_CACHE_ENABLED` | `true` | включить кэш |
 | `ENRICH_CACHE_TTL` | `2592000` | время жизни записи кэша, сек (30 дней) |
 | `ENRICH_REDIS_URL` | `redis://redis:6379/0` | адрес Redis |
-| `ENRICH_GIS_ZHKH_INDEX_PATH` | пусто | путь к `index.json` адресов/ФИАС из реестра лицензий ГИС ЖКХ |
+| `ENRICH_GIS_ZHKH_INDEX_PATH` | `/app/data/gis_zhkh_index.json` | путь к индексу адресов/ФИАС из реестра лицензий ГИС ЖКХ |
+| `ENRICH_GIS_ZHKH_PASSPORT_ENABLED` | `true` | получать официальный электронный паспорт МКД |
+| `ENRICH_GIS_ZHKH_PASSPORT_POLL_ATTEMPTS` | `30` | максимум опросов готовности паспорта |
+| `ENRICH_OSM_ENABLED` | `true` | получать подъезды и параметры здания из OSM |
+| `ENRICH_OSM_USER_AGENT` | `dom-mos-enrichment/1.0` | идентификатор клиента Nominatim/Overpass |
 | `ENRICH_BEELINE_ENABLED` | `true` | включить проверку подключения дома к Beeline |
 | `ENRICH_BEELINE_TIMEOUT` | `10` | таймаут запроса к Beeline, сек |
 
@@ -156,6 +179,26 @@ Content-Type: application/json
 и `cityFiasId`. Cookies и авторизация не используются. Результат доступен в
 `beeline` и в `canonical.provider_availability`; без необходимых ФИАС статус
 будет `skipped`.
+
+### Индекс ГИС ЖКХ
+
+Индекс адресов строится из актуальных реестров лицензий Москвы и Московской
+области и атомарно записывается в Docker volume:
+
+```bash
+make gis-index
+```
+
+Команду рекомендуется запускать раз в неделю. Для других регионов можно вызвать
+`python -m app.scripts.build_gis_index <коды регионов>` внутри контейнера.
+Электронный паспорт запрашивается только после получения GUID дома. Отказ
+паспорта или OSM не ломает весь ответ: отдельный статус и причина появляются в
+`sources` и `warnings`.
+
+Диапазоны квартир подъезда с `source: "osm"` взяты из OSM. Значения с
+`source: "estimate"` рассчитаны равномерно и не должны показываться как
+официальные. Данные OSM используются по лицензии ODbL с атрибуцией
+«© участники OpenStreetMap».
 
 > **Важно:** `ENRICH_BATCH_CONCURRENCY` по умолчанию `1` — dom.mos.ru за
 > DDoS-Guard блокирует IP при большом числе одновременных запросов.

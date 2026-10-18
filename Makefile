@@ -9,7 +9,7 @@ COMPOSE := docker compose
 IMAGE := dom-mos-enrichment:latest
 CONTAINER := dom-mos-enrichment
 
-.PHONY: help build up down restart logs ps health smoke flush-cache clean
+.PHONY: help build up down restart logs ps health smoke gis-index flush-cache clean
 
 help: ## список доступных команд
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -37,6 +37,9 @@ health: ## проверить /health
 
 smoke: ## smoke-тест: обогащение одного адреса
 	@curl -s "http://$(HOST):$(ENRICH_PORT)/api/v1/enrich?address=%D0%A8%D0%B0%D1%80%D0%B8%D0%BA%D0%BE%D0%BF%D0%BE%D0%B4%D1%88%D0%B8%D0%BF%D0%BD%D0%B8%D0%BA%D0%BE%D0%B2%D1%81%D0%BA%D0%B0%D1%8F%2028"
+
+gis-index: ## скачать реестры Москвы/МО и атомарно обновить индекс ГИС ЖКХ
+	$(COMPOSE) run --rm enrichment python -m app.scripts.build_gis_index 77 50
 
 flush-cache: ## очистить кэш Redis
 	@$(COMPOSE) exec redis redis-cli FLUSHDB

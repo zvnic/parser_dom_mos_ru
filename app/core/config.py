@@ -18,7 +18,11 @@ class Settings(BaseSettings):
     cache_enabled: bool = True
     cache_ttl: int = 2592000  # 30 дней (данные о домах почти не меняются)
     redis_url: str = "redis://redis:6379/0"
-    gis_zhkh_index_path: str | None = None
+    gis_zhkh_index_path: str | None = "/app/data/gis_zhkh_index.json"
+    gis_zhkh_passport_enabled: bool = True
+    gis_zhkh_passport_poll_attempts: int = 30
+    osm_enabled: bool = True
+    osm_user_agent: str = "dom-mos-enrichment/1.0 (address enrichment service)"
     beeline_enabled: bool = True
     beeline_timeout: float = 10.0
     # moskva.beeline.ru — только Москва, поэтому ФИАС города/региона фиксирован

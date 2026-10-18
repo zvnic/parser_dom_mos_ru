@@ -10,6 +10,8 @@ from app.services import dom_mos
 from app.services.canonical import to_canonical
 from app.services.openaddress import enrich as openaddress_enrich
 from app.services.gis_zhkh import enrich as gis_zhkh_enrich
+from app.services.gis_zhkh import passport as gis_zhkh_passport
+from app.services.osm import entrances as osm_entrances
 from app.services.beeline import check_connection as beeline_check_connection
 from app.services.beeline import resolve_address
 
@@ -35,7 +37,10 @@ def enrich(address: str) -> dict:
     corpus = dom_mos.extract_corpus(clean_address)
     query = dom_mos.normalize(clean_address)
 
-    sources = {"dom_mos": "error", "openaddress": "error", "gis_zhkh": "error", "beeline": "error"}
+    sources = {
+        "dom_mos": "error", "openaddress": "error", "gis_zhkh": "error",
+        "gis_zhkh_passport": "disabled", "osm": "disabled", "beeline": "error",
+    }
     warnings: list[str] = []
     mkd: dict | None = None
     mkd_id: str | None = None
@@ -98,6 +103,38 @@ def enrich(address: str) -> dict:
         sources["gis_zhkh"] = "error"
         warnings.append(f"ГИС ЖКХ недоступен: {exc}")
 
+    # 4. Официальный электронный паспорт МКД: квартиры, лифты и элементы дома.
+    electronic_passport: dict = {}
+    if settings.gis_zhkh_passport_enabled and gis_zhkh.get("gisHouseGuid"):
+        try:
+            electronic_passport = gis_zhkh_passport(gis_zhkh["gisHouseGuid"])
+            gis_zhkh["electronicPassport"] = electronic_passport
+            sources["gis_zhkh_passport"] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            sources["gis_zhkh_passport"] = "error"
+            warnings.append(f"Электронный паспорт ГИС ЖКХ недоступен: {exc}")
+    elif settings.gis_zhkh_passport_enabled:
+        sources["gis_zhkh_passport"] = "skipped"
+
+    # 5. OSM: реальные входы и диапазоны квартир; расчет явно помечается estimate.
+    osm: dict = {}
+    if settings.osm_enabled:
+        try:
+            osm = osm_entrances(
+                (mkd or {}).get("fullAddress") or gis_zhkh.get("address") or address,
+                flats_total=_as_int(electronic_passport.get("apartments")),
+                entrances_count=_as_int((enrichment or {}).get("entrances")),
+                flat=_as_int(_extract_flat(address)),
+            )
+            if osm.get("found"):
+                sources["osm"] = "ok"
+            else:
+                sources["osm"] = "no_data"
+                warnings.append(f"OpenStreetMap: {osm.get('reason', 'данные о подъездах не найдены')}")
+        except Exception as exc:  # noqa: BLE001
+            sources["osm"] = "error"
+            warnings.append(f"OpenStreetMap недоступен: {exc}")
+
     merged = {**enrichment, **gis_zhkh}
     beeline: dict = {}
     try:
@@ -119,11 +156,13 @@ def enrich(address: str) -> dict:
         )
 
     result: dict = {
-        "canonical": to_canonical(mkd, merged, providers),
+        "canonical": to_canonical(mkd, merged, providers, osm),
         "sources": sources,
         "warnings": warnings,
         "openaddress": enrichment,
         "gis_zhkh": gis_zhkh,
+        "gis_zhkh_passport": electronic_passport,
+        "osm": osm,
         "beeline": beeline,
         "mkdId": mkd_id,
         "address": (mkd or {}).get("fullAddress") or enrichment.get("address") or gis_zhkh.get("address"),
@@ -144,7 +183,7 @@ def enrich(address: str) -> dict:
     # Кэшируем только полностью успешные результаты: если хоть один источник
     # вернул error или no_data, не кэшируем — иначе устаревший/неполный ответ
     # застрянет в Redis и замаскирует реальные проблемы источников.
-    if all(status == "ok" for status in sources.values()):
+    if all(status in ("ok", "disabled", "skipped") for status in sources.values()):
         cache_set(address, result)
 
     return result
@@ -203,6 +242,13 @@ def _extract_flat(address: str) -> str | None:
     """Извлекает номер квартиры/помещения из адреса."""
     m = re.search(r"\b(?:кв|квартира|кварт|офис|помещение)\s*\.?\s*(\d+)", address, re.IGNORECASE)
     return m.group(1) if m else None
+
+
+def _as_int(value) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _find_value(objects: tuple[dict | None, ...], key: str):
