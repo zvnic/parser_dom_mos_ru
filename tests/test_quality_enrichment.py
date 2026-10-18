@@ -73,7 +73,8 @@ class OsmEntranceTests(unittest.TestCase):
         )
         self.assertEqual(
             _query_address("Москва, Плеханова улица, дом 12"),
-            "Москва, Плеханова улица, 12",
+            # в OSM «улица Плеханова»: тип впереди, если название не прилагательное
+            "Москва, улица Плеханова, 12",
         )
 
     def test_estimates_points_along_longest_building_edge(self):

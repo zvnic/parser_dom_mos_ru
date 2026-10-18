@@ -7,6 +7,7 @@ import urllib.parse
 import urllib.request
 
 from app.core.config import settings
+from app.services.osm_query import query_variants
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 OSM_API = "https://api.openstreetmap.org/api/0.6"
@@ -44,48 +45,8 @@ def _overpass_get(data: bytes):
 
 
 def _query_address(address: str) -> str:
-    value = re.sub(r"^.*?\bМосква,\s*", "", address, flags=re.I)
-    value = re.sub(r",\s*(?:кв|квартира)\.?\s*\d+.*$", "", value, flags=re.I)
-    for pattern, replacement in (
-        (r"\bпр-кт(?=\.|\s|,|$)\.?\s*", "проспект "),
-        (r"\bул(?=\.|\s|,|$)\.?\s*", "улица "),
-        (r"\bб-р(?=\.|\s|,|$)\.?\s*", "бульвар "),
-        (r"\bпер(?=\.|\s|,|$)\.?\s*", "переулок "),
-        (r"\bнаб(?=\.|\s|,|$)\.?\s*", "набережная "),
-        (r"\bш(?=\.|\s|,|$)\.?\s*", "шоссе "),
-        (r"\bпл(?=\.|\s|,|$)\.?\s*", "площадь "),
-    ):
-        value = re.sub(pattern, replacement, value, flags=re.I)
-    value = re.sub(r"\bд\.\s*", "дом ", value, flags=re.I)
-    value = re.sub(r"\bк\.\s*(?=\d)", "корпус ", value, flags=re.I)
-    value = re.sub(r"\bстр\.\s*(?=\d)", "строение ", value, flags=re.I)
-    value = re.sub(r"\s+", " ", value).strip(" ,")
-
-    street_types = "улица|бульвар|переулок|набережная|шоссе|площадь|проспект"
-    parts = [part.strip() for part in value.split(",") if part.strip()]
-    street_index = next((
-        index for index, part in enumerate(parts)
-        if re.search(rf"\b(?:{street_types})\b", part, flags=re.I)
-    ), None)
-    if street_index is None:
-        return "Москва, " + value
-
-    street = parts[street_index]
-    prefix = re.match(rf"^({street_types})\s+(.+)$", street, flags=re.I)
-    if prefix:
-        street = f"{prefix.group(2)} {prefix.group(1)}"
-    building = ", ".join(parts[street_index + 1:])
-    house = re.search(r"(?:\bдом\s*)?(\d+[А-ЯA-Z]?)", building, flags=re.I)
-    corpus = re.search(r"\b(?:корпус|к)\.?\s*(\d+[А-ЯA-Z]?)", building, flags=re.I)
-    structure = re.search(r"\b(?:строение|стр|с)\.?\s*(\d+[А-ЯA-Z]?)", building, flags=re.I)
-    if not house:
-        return "Москва, " + value
-    suffix = f" {house.group(1)}"
-    if corpus:
-        suffix += f" к{corpus.group(1)}"
-    if structure:
-        suffix += f" с{structure.group(1)}"
-    return f"Москва, {street},{suffix}"
+    """Основной вариант запроса к Nominatim (см. osm_query.query_variants)."""
+    return query_variants(address)[0]
 
 
 def _building_hit(hits: list[dict]) -> dict | None:
@@ -161,16 +122,28 @@ def entrances(
     entrances_count: int | None = None, flat: int | None = None,
 ) -> dict:
     """Возвращает подъезды, диапазоны квартир и координаты дверей."""
-    query = urllib.parse.urlencode({
-        "format": "jsonv2", "limit": 5, "extratags": 1, "entrances": 1,
-        "polygon_geojson": 1,
-        "countrycodes": "ru", "q": _query_address(address),
-    })
-    hits = _get(NOMINATIM + "?" + query)
-    # Публичный Nominatim требует не более одного запроса в секунду.
-    time.sleep(1.1)
-    building = _building_hit(hits)
+    building, last_error = None, None
+    for variant in query_variants(address):
+        query = urllib.parse.urlencode({
+            "format": "jsonv2", "limit": 5, "extratags": 1, "entrances": 1,
+            "polygon_geojson": 1,
+            "countrycodes": "ru", "q": variant,
+        })
+        try:
+            hits = _get(NOMINATIM + "?" + query)
+        except Exception as exc:  # noqa: BLE001 — таймаут/429/5xx: это не «здания нет»
+            last_error = exc
+            continue
+        finally:
+            # Публичный Nominatim требует не более одного запроса в секунду.
+            time.sleep(1.1)
+        building = _building_hit(hits)
+        if building:
+            break
     if not building:
+        if last_error is not None:
+            return {"found": False, "address": address, "retry": True,
+                    "reason": f"OpenStreetMap временно недоступен: {last_error}"}
         return {"found": False, "address": address, "reason": "здание не найдено в OSM"}
     osm_id = int(building["osm_id"])
     osm_type = building["osm_type"]
