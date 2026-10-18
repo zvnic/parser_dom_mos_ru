@@ -8,7 +8,7 @@ import openpyxl
 from app.scripts.build_gis_index import build
 from app.services.canonical import to_canonical
 from app.services.gis_zhkh import address_key
-from app.services.osm import entrances
+from app.services.osm import _overpass_get, _query_address, entrances
 
 
 class CanonicalQualityTests(unittest.TestCase):
@@ -48,6 +48,35 @@ class CanonicalQualityTests(unittest.TestCase):
 
 
 class OsmEntranceTests(unittest.TestCase):
+    def test_normalizes_abbreviation_without_space_after_dot(self):
+        self.assertEqual(
+            _query_address("Город Москва, б-р.Ореховый, д. 11 к 1"),
+            "Москва, бульвар Ореховый, 11 к1",
+        )
+
+    @patch("app.services.osm._get")
+    def test_overpass_uses_fallback_endpoint(self, get):
+        get.side_effect = [OSError("primary unavailable"), {"elements": []}]
+
+        self.assertEqual(_overpass_get(b"data=query"), {"elements": []})
+        self.assertIn("maps.mail.ru", get.call_args_list[1].args[0])
+
+    @patch("app.services.osm._get")
+    def test_uses_entrances_embedded_in_nominatim_result(self, get):
+        get.return_value = [{
+            "osm_type": "way", "category": "building", "osm_id": 42,
+            "entrances": [{
+                "extratags": {"ref": "1", "addr:flats": "1-20"},
+                "lat": "55.1", "lon": "37.1",
+            }],
+        }]
+
+        result = entrances("Москва, ул.Тестовая, д. 1", flat=10)
+
+        self.assertEqual(get.call_count, 1)
+        self.assertEqual(result["flatEntrance"]["entrance"], 1)
+        self.assertEqual(result["flatEntrance"]["lat"], "55.1")
+
     @patch("app.services.osm._get")
     def test_osm_ranges_and_flat_entrance(self, get):
         get.side_effect = [
@@ -63,6 +92,25 @@ class OsmEntranceTests(unittest.TestCase):
         self.assertEqual(result["entrancesCount"], 2)
         self.assertEqual(result["flatEntrance"]["entrance"], 2)
         self.assertEqual(result["levels"], 5)
+
+    @patch("app.services.osm._get")
+    def test_uses_later_relation_candidate_and_keeps_unnumbered_entrance(self, get):
+        get.side_effect = [
+            [
+                {"osm_type": "node", "category": "place", "osm_id": 1},
+                {"osm_type": "relation", "category": "building", "osm_id": 42},
+            ],
+            {"elements": [
+                {"tags": {"entrance": "yes"}, "lat": 55.1, "lon": 37.1},
+            ]},
+        ]
+
+        result = entrances("Москва, ул.Тестовая, д. 1")
+
+        self.assertTrue(result["found"])
+        self.assertEqual(result["osmType"], "relation")
+        self.assertEqual(result["entrances"][0]["lat"], 55.1)
+        self.assertIn("rel%2842%29", get.call_args_list[1].args[1].decode())
 
 
 class GisIndexTests(unittest.TestCase):

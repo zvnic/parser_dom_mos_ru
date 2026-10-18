@@ -9,7 +9,11 @@ import urllib.request
 from app.core.config import settings
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
-OVERPASS = "https://overpass-api.de/api/interpreter"
+OVERPASS_ENDPOINTS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+)
 
 
 def _get(url: str, data: bytes | None = None):
@@ -27,20 +31,48 @@ def _get(url: str, data: bytes | None = None):
     raise last
 
 
+def _overpass_get(data: bytes):
+    last: Exception | None = None
+    for endpoint in OVERPASS_ENDPOINTS:
+        try:
+            return _get(endpoint, data)
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+    assert last is not None
+    raise last
+
+
 def _query_address(address: str) -> str:
     value = re.sub(r"^.*?Москва,\s*", "", address, flags=re.I)
     value = re.sub(r",\s*(?:кв|квартира)\.?\s*\d+.*$", "", value, flags=re.I)
     for pattern, replacement in (
-        (r"\bпр-кт\.?", "проспект"), (r"\bул\.?", "улица"),
-        (r"\bб-р\.?", "бульвар"), (r"\bпер\.?", "переулок"),
-        (r"\bнаб\.?", "набережная"), (r"\bш\.?", "шоссе"),
-        (r"\bпл\.?", "площадь"),
+        (r"\bпр-кт\.?\s*", "проспект "), (r"\bул\.?\s*", "улица "),
+        (r"\bб-р\.?\s*", "бульвар "), (r"\bпер\.?\s*", "переулок "),
+        (r"\bнаб\.?\s*", "набережная "), (r"\bш\.?\s*", "шоссе "),
+        (r"\bпл\.?\s*", "площадь "),
     ):
         value = re.sub(pattern, replacement, value, flags=re.I)
     value = re.sub(r"\bд\.?\s*", "", value, flags=re.I)
     value = re.sub(r"\s+к\s*(\d+)", r" к\1", value, flags=re.I)
     value = re.sub(r"\s+стр\.?\s*(\d+)", r" с\1", value, flags=re.I)
-    return "Москва, " + value.strip(" ,")
+    return "Москва, " + re.sub(r"\s+", " ", value).strip(" ,")
+
+
+def _building_hit(hits: list[dict]) -> dict | None:
+    return next((
+        hit for hit in hits
+        if hit.get("osm_type") in {"way", "relation"}
+        and (hit.get("class") or hit.get("category")) == "building"
+    ), None)
+
+
+def _entrance_query(osm_type: str, osm_id: int) -> str:
+    if osm_type == "relation":
+        return (
+            f'[out:json][timeout:60];rel({osm_id});'
+            '(node(r)["entrance"];way(r);node(w)["entrance"];);out body;'
+        )
+    return f'[out:json][timeout:60];way({osm_id});node(w)["entrance"];out body;'
 
 
 def _number(value):
@@ -62,33 +94,32 @@ def entrances(
 ) -> dict:
     """Возвращает подъезды, диапазоны квартир и координаты дверей."""
     query = urllib.parse.urlencode({
-        "format": "json", "limit": 1, "extratags": 1,
+        "format": "jsonv2", "limit": 5, "extratags": 1, "entrances": 1,
         "countrycodes": "ru", "q": _query_address(address),
     })
     hits = _get(NOMINATIM + "?" + query)
     # Публичный Nominatim требует не более одного запроса в секунду.
     time.sleep(1.1)
-    building = next(
-        (hit for hit in hits if hit.get("osm_type") == "way" and hit.get("class") == "building"), None
-    )
+    building = _building_hit(hits)
     if not building:
         return {"found": False, "address": address, "reason": "здание не найдено в OSM"}
-    way = int(building["osm_id"])
+    osm_id = int(building["osm_id"])
+    osm_type = building["osm_type"]
     tags = building.get("extratags") or {}
-    overpass_query = f'[out:json][timeout:60];way({way});node(w)["entrance"];out body;'
-    elements = _get(
-        OVERPASS, urllib.parse.urlencode({"data": overpass_query}).encode()
-    ).get("elements", [])
+    elements = building.get("entrances") or []
+    if not elements:
+        overpass_query = _entrance_query(osm_type, osm_id)
+        elements = _overpass_get(
+            urllib.parse.urlencode({"data": overpass_query}).encode()
+        ).get("elements", [])
     osm_flats = _number(tags.get("building:flats"))
     total = flats_total or osm_flats
     items = []
     for node in elements:
-        node_tags = node.get("tags") or {}
+        node_tags = node.get("tags") or node.get("extratags") or {}
         range_ = _flat_range(node_tags.get("addr:flats"))
         reference = node_tags.get("ref")
         number = int(reference) if str(reference or "").isdigit() else reference
-        if not range_ and not number:
-            continue
         items.append({
             "number": number,
             "flatsFrom": range_[0] if range_ else None,
@@ -119,7 +150,9 @@ def entrances(
         if flat is not None and item["flatsFrom"] and item["flatsFrom"] <= flat <= item["flatsTo"]
     ), None)
     return {
-        "found": True, "address": address, "osmWay": way,
+        "found": True, "address": address,
+        "osmType": osm_type, "osmId": osm_id,
+        "osmWay": osm_id if osm_type == "way" else None,
         "levels": _number(tags.get("building:levels")), "flatsTotal": total,
         "flatsSource": "passport" if flats_total else ("osm" if osm_flats else None),
         "entrancesCount": len(items) or None, "entrances": items,
