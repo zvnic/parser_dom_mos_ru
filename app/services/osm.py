@@ -9,6 +9,7 @@ import urllib.request
 from app.core.config import settings
 
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
+OSM_API = "https://api.openstreetmap.org/api/0.6"
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
@@ -43,7 +44,7 @@ def _overpass_get(data: bytes):
 
 
 def _query_address(address: str) -> str:
-    value = re.sub(r"^.*?Москва,\s*", "", address, flags=re.I)
+    value = re.sub(r"^.*?\bМосква,\s*", "", address, flags=re.I)
     value = re.sub(r",\s*(?:кв|квартира)\.?\s*\d+.*$", "", value, flags=re.I)
     for pattern, replacement in (
         (r"\bпр-кт\.?\s*", "проспект "), (r"\bул\.?\s*", "улица "),
@@ -52,10 +53,36 @@ def _query_address(address: str) -> str:
         (r"\bпл\.?\s*", "площадь "),
     ):
         value = re.sub(pattern, replacement, value, flags=re.I)
-    value = re.sub(r"\bд\.?\s*", "", value, flags=re.I)
-    value = re.sub(r"\s+к\s*(\d+)", r" к\1", value, flags=re.I)
-    value = re.sub(r"\s+стр\.?\s*(\d+)", r" с\1", value, flags=re.I)
-    return "Москва, " + re.sub(r"\s+", " ", value).strip(" ,")
+    value = re.sub(r"\bд\.\s*", "дом ", value, flags=re.I)
+    value = re.sub(r"\bк\.\s*(?=\d)", "корпус ", value, flags=re.I)
+    value = re.sub(r"\bстр\.\s*(?=\d)", "строение ", value, flags=re.I)
+    value = re.sub(r"\s+", " ", value).strip(" ,")
+
+    street_types = "улица|бульвар|переулок|набережная|шоссе|площадь|проспект"
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    street_index = next((
+        index for index, part in enumerate(parts)
+        if re.search(rf"\b(?:{street_types})\b", part, flags=re.I)
+    ), None)
+    if street_index is None:
+        return "Москва, " + value
+
+    street = parts[street_index]
+    prefix = re.match(rf"^({street_types})\s+(.+)$", street, flags=re.I)
+    if prefix:
+        street = f"{prefix.group(2)} {prefix.group(1)}"
+    building = ", ".join(parts[street_index + 1:])
+    house = re.search(r"(?:\bдом\s*)?(\d+[А-ЯA-Z]?)", building, flags=re.I)
+    corpus = re.search(r"\b(?:корпус|к)\.?\s*(\d+[А-ЯA-Z]?)", building, flags=re.I)
+    structure = re.search(r"\b(?:строение|стр|с)\.?\s*(\d+[А-ЯA-Z]?)", building, flags=re.I)
+    if not house:
+        return "Москва, " + value
+    suffix = f" {house.group(1)}"
+    if corpus:
+        suffix += f" к{corpus.group(1)}"
+    if structure:
+        suffix += f" с{structure.group(1)}"
+    return f"Москва, {street},{suffix}"
 
 
 def _building_hit(hits: list[dict]) -> dict | None:
@@ -73,6 +100,44 @@ def _entrance_query(osm_type: str, osm_id: int) -> str:
             '(node(r)["entrance"];way(r);node(w)["entrance"];);out body;'
         )
     return f'[out:json][timeout:60];way({osm_id});node(w)["entrance"];out body;'
+
+
+def _way_entrances(osm_id: int) -> list[dict]:
+    elements = _get(f"{OSM_API}/way/{osm_id}/full.json").get("elements", [])
+    return [
+        element for element in elements
+        if element.get("type") == "node" and (element.get("tags") or {}).get("entrance")
+    ]
+
+
+def _estimated_points(geojson: dict | None, count: int) -> list[tuple[float, float]]:
+    if not geojson or count < 1:
+        return []
+    coordinates = geojson.get("coordinates") or []
+    if geojson.get("type") == "Polygon":
+        rings = coordinates[:1]
+    elif geojson.get("type") == "MultiPolygon":
+        rings = [polygon[0] for polygon in coordinates if polygon]
+    else:
+        rings = []
+    edges = [
+        (start, end)
+        for ring in rings
+        for start, end in zip(ring, ring[1:])
+        if len(start) >= 2 and len(end) >= 2
+    ]
+    if not edges:
+        return []
+    start, end = max(edges, key=lambda edge: (
+        (edge[1][0] - edge[0][0]) ** 2 + (edge[1][1] - edge[0][1]) ** 2
+    ))
+    return [
+        (
+            start[1] + (end[1] - start[1]) * position / (count + 1),
+            start[0] + (end[0] - start[0]) * position / (count + 1),
+        )
+        for position in range(1, count + 1)
+    ]
 
 
 def _number(value):
@@ -95,6 +160,7 @@ def entrances(
     """Возвращает подъезды, диапазоны квартир и координаты дверей."""
     query = urllib.parse.urlencode({
         "format": "jsonv2", "limit": 5, "extratags": 1, "entrances": 1,
+        "polygon_geojson": 1,
         "countrycodes": "ru", "q": _query_address(address),
     })
     hits = _get(NOMINATIM + "?" + query)
@@ -108,10 +174,13 @@ def entrances(
     tags = building.get("extratags") or {}
     elements = building.get("entrances") or []
     if not elements:
-        overpass_query = _entrance_query(osm_type, osm_id)
-        elements = _overpass_get(
-            urllib.parse.urlencode({"data": overpass_query}).encode()
-        ).get("elements", [])
+        if osm_type == "way":
+            elements = _way_entrances(osm_id)
+        else:
+            overpass_query = _entrance_query(osm_type, osm_id)
+            elements = _overpass_get(
+                urllib.parse.urlencode({"data": overpass_query}).encode()
+            ).get("elements", [])
     osm_flats = _number(tags.get("building:flats"))
     total = flats_total or osm_flats
     items = []
@@ -131,9 +200,12 @@ def entrances(
         item["number"] if isinstance(item["number"], int) else 10**6, item["flatsFrom"] or 0
     ))
     if not items and entrances_count:
+        points = _estimated_points(building.get("geojson"), int(entrances_count))
         items = [
             {"number": number + 1, "flatsFrom": None, "flatsTo": None,
-             "lat": None, "lon": None, "source": None}
+             "lat": points[number][0] if number < len(points) else None,
+             "lon": points[number][1] if number < len(points) else None,
+             "source": "estimate"}
             for number in range(int(entrances_count))
         ]
     if items and total and not all(item["flatsFrom"] for item in items):

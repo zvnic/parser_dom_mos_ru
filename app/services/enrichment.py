@@ -121,7 +121,8 @@ def enrich(address: str) -> dict:
     if settings.osm_enabled:
         try:
             osm = osm_entrances(
-                (mkd or {}).get("fullAddress") or gis_zhkh.get("address") or address,
+                gis_zhkh.get("address") or (enrichment or {}).get("address")
+                or (mkd or {}).get("fullAddress") or address,
                 flats_total=_as_int(electronic_passport.get("apartments")),
                 entrances_count=_as_int((enrichment or {}).get("entrances")),
                 flat=_as_int(_extract_flat(address)),

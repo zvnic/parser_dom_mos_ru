@@ -8,7 +8,7 @@ import openpyxl
 from app.scripts.build_gis_index import build
 from app.services.canonical import to_canonical
 from app.services.gis_zhkh import address_key
-from app.services.osm import _overpass_get, _query_address, entrances
+from app.services.osm import _estimated_points, _overpass_get, _query_address, entrances
 
 
 class CanonicalQualityTests(unittest.TestCase):
@@ -51,8 +51,31 @@ class OsmEntranceTests(unittest.TestCase):
     def test_normalizes_abbreviation_without_space_after_dot(self):
         self.assertEqual(
             _query_address("Город Москва, б-р.Ореховый, д. 11 к 1"),
-            "Москва, бульвар Ореховый, 11 к1",
+            "Москва, Ореховый бульвар, 11 к1",
         )
+
+    def test_compacts_long_mos_ru_address(self):
+        self.assertEqual(
+            _query_address(
+                "Российская Федерация, город Москва, внутригородская территория "
+                "муниципальный округ Нагатинский Затон, Кленовый бульвар, "
+                "дом 10, корпус 1"
+            ),
+            "Москва, Кленовый бульвар, 10 к1",
+        )
+
+    def test_estimates_points_along_longest_building_edge(self):
+        points = _estimated_points({
+            "type": "Polygon",
+            "coordinates": [[
+                [37.0, 55.0], [37.3, 55.0], [37.3, 55.1],
+                [37.0, 55.1], [37.0, 55.0],
+            ]],
+        }, 2)
+
+        self.assertEqual(points[0], (55.0, 37.1))
+        self.assertAlmostEqual(points[1][0], 55.0)
+        self.assertAlmostEqual(points[1][1], 37.2)
 
     @patch("app.services.osm._get")
     def test_overpass_uses_fallback_endpoint(self, get):
@@ -83,8 +106,8 @@ class OsmEntranceTests(unittest.TestCase):
             [{"osm_type": "way", "class": "building", "osm_id": 42,
               "extratags": {"building:levels": "5", "building:flats": "40"}}],
             {"elements": [
-                {"tags": {"ref": "1", "addr:flats": "1-20"}, "lat": 55.1, "lon": 37.1},
-                {"tags": {"ref": "2", "addr:flats": "21-40"}, "lat": 55.2, "lon": 37.2},
+                {"type": "node", "tags": {"entrance": "yes", "ref": "1", "addr:flats": "1-20"}, "lat": 55.1, "lon": 37.1},
+                {"type": "node", "tags": {"entrance": "yes", "ref": "2", "addr:flats": "21-40"}, "lat": 55.2, "lon": 37.2},
             ]},
         ]
         result = entrances("Москва, ул. Тестовая, д. 1", flat=25)
