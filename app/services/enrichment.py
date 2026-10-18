@@ -129,6 +129,10 @@ def enrich(address: str) -> dict:
             )
             if osm.get("found"):
                 sources["osm"] = "ok"
+            elif osm.get("retry"):
+                # временная ошибка Nominatim: не кэшируем как «нет данных», повторится при следующем запросе
+                sources["osm"] = "error"
+                warnings.append(osm["reason"])
             else:
                 sources["osm"] = "no_data"
                 warnings.append(f"OpenStreetMap: {osm.get('reason', 'данные о подъездах не найдены')}")
