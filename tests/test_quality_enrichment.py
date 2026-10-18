@@ -64,6 +64,18 @@ class OsmEntranceTests(unittest.TestCase):
             "Москва, Кленовый бульвар, 10 к1",
         )
 
+    def test_street_name_prefix_is_not_treated_as_abbreviation(self):
+        self.assertEqual(
+            _query_address(
+                "115088, г Москва, ул Шарикоподшипниковская, д. 28"
+            ),
+            "Москва, Шарикоподшипниковская улица, 28",
+        )
+        self.assertEqual(
+            _query_address("Москва, Плеханова улица, дом 12"),
+            "Москва, Плеханова улица, 12",
+        )
+
     def test_estimates_points_along_longest_building_edge(self):
         points = _estimated_points({
             "type": "Polygon",
